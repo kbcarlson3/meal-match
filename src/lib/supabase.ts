@@ -44,6 +44,7 @@ export interface Database {
           full_name: string | null;
           avatar_url: string | null;
           dietary_preferences: Json;
+          push_token: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -53,6 +54,7 @@ export interface Database {
           full_name?: string | null;
           avatar_url?: string | null;
           dietary_preferences?: Json;
+          push_token?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -62,6 +64,7 @@ export interface Database {
           full_name?: string | null;
           avatar_url?: string | null;
           dietary_preferences?: Json;
+          push_token?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -268,6 +271,7 @@ export interface Profile {
   full_name: string | null;
   avatar_url: string | null;
   dietary_preferences: string[];
+  push_token: string | null;
   created_at: string;
   updated_at: string;
 }

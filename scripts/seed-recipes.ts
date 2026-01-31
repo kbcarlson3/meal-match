@@ -1,23 +1,25 @@
 /**
- * Seed Recipes Script
+ * Seed Recipes Script (TypeScript)
  *
  * Fetches all recipes from TheMealDB API and seeds them into the Supabase database.
  * This script loops through a-z to fetch approximately 600 recipes.
  *
- * Usage: npm run seed:recipes
+ * Usage: npx tsx scripts/seed-recipes.ts
  *
  * Requirements:
  * - .env file must be configured with EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY
  * - Database schema must be created (run migration first)
+ * - Install tsx: npm install -D tsx
  */
 
-require('dotenv').config();
-const { createClient } = require('@supabase/supabase-js');
+import 'dotenv/config';
+import { createClient } from '@supabase/supabase-js';
+import type { Database } from '../src/lib/supabase';
 
 // Configuration
 const MEALDB_BASE_URL = 'https://www.themealdb.com/api/json/v1/1';
-const BATCH_SIZE = 50; // Insert recipes in batches
-const DELAY_MS = 100; // Delay between API calls to avoid rate limiting
+const BATCH_SIZE = 50;
+const DELAY_MS = 100;
 
 // Initialize Supabase client
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
@@ -37,38 +39,121 @@ if (!supabaseUrl || !supabaseSecretKey) {
   process.exit(1);
 }
 
-const supabase = createClient(supabaseUrl, supabaseSecretKey);
+const supabase = createClient<Database>(supabaseUrl, supabaseSecretKey);
 
-/**
- * Delay execution for a specified time
- */
-function delay(ms) {
+// =====================================================
+// TheMealDB API Types
+// =====================================================
+
+interface MealDBMeal {
+  idMeal: string;
+  strMeal: string;
+  strDrinkAlternate: string | null;
+  strCategory: string;
+  strArea: string;
+  strInstructions: string;
+  strMealThumb: string;
+  strTags: string | null;
+  strYoutube: string;
+  strIngredient1: string;
+  strIngredient2: string;
+  strIngredient3: string;
+  strIngredient4: string;
+  strIngredient5: string;
+  strIngredient6: string;
+  strIngredient7: string;
+  strIngredient8: string;
+  strIngredient9: string;
+  strIngredient10: string;
+  strIngredient11: string;
+  strIngredient12: string;
+  strIngredient13: string;
+  strIngredient14: string;
+  strIngredient15: string;
+  strIngredient16: string;
+  strIngredient17: string;
+  strIngredient18: string;
+  strIngredient19: string;
+  strIngredient20: string;
+  strMeasure1: string;
+  strMeasure2: string;
+  strMeasure3: string;
+  strMeasure4: string;
+  strMeasure5: string;
+  strMeasure6: string;
+  strMeasure7: string;
+  strMeasure8: string;
+  strMeasure9: string;
+  strMeasure10: string;
+  strMeasure11: string;
+  strMeasure12: string;
+  strMeasure13: string;
+  strMeasure14: string;
+  strMeasure15: string;
+  strMeasure16: string;
+  strMeasure17: string;
+  strMeasure18: string;
+  strMeasure19: string;
+  strMeasure20: string;
+  strSource: string | null;
+  strImageSource: string | null;
+  strCreativeCommonsConfirmed: string | null;
+  dateModified: string | null;
+}
+
+interface MealDBResponse {
+  meals: MealDBMeal[] | null;
+}
+
+interface Ingredient {
+  ingredient: string;
+  measure: string;
+}
+
+interface Recipe {
+  id: string;
+  title: string;
+  image_url: string | null;
+  cuisine_type: string | null;
+  area: string | null;
+  category: string | null;
+  ingredients: Ingredient[];
+  instructions: string | null;
+  youtube_url: string | null;
+  tags: string[];
+}
+
+// =====================================================
+// Helper Functions
+// =====================================================
+
+function delay(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-/**
- * Fetch recipes from TheMealDB by first letter
- */
-async function fetchRecipesByLetter(letter) {
+async function fetchRecipesByLetter(letter: string): Promise<MealDBMeal[]> {
   try {
     const response = await fetch(`${MEALDB_BASE_URL}/search.php?f=${letter}`);
-    const data = await response.json();
+    const data: MealDBResponse = await response.json();
     return data.meals || [];
   } catch (error) {
-    console.error(`Error fetching recipes for letter ${letter}:`, error.message);
+    console.error(
+      `Error fetching recipes for letter ${letter}:`,
+      error instanceof Error ? error.message : 'Unknown error'
+    );
     return [];
   }
 }
 
-/**
- * Transform TheMealDB recipe to our database schema
- */
-function transformRecipe(meal) {
-  // Extract ingredients and measures
-  const ingredients = [];
+function transformRecipe(meal: MealDBMeal): Recipe {
+  const ingredients: Ingredient[] = [];
+
   for (let i = 1; i <= 20; i++) {
-    const ingredient = meal[`strIngredient${i}`];
-    const measure = meal[`strMeasure${i}`];
+    const ingredientKey = `strIngredient${i}` as keyof MealDBMeal;
+    const measureKey = `strMeasure${i}` as keyof MealDBMeal;
+
+    const ingredient = meal[ingredientKey] as string;
+    const measure = meal[measureKey] as string;
 
     if (ingredient && ingredient.trim()) {
       ingredients.push({
@@ -78,69 +163,75 @@ function transformRecipe(meal) {
     }
   }
 
-  // Parse tags
-  const tags = meal.strTags ? meal.strTags.split(',').map(tag => tag.trim()) : [];
+  const tags = meal.strTags
+    ? meal.strTags.split(',').map(tag => tag.trim())
+    : [];
 
   return {
     id: meal.idMeal,
     title: meal.strMeal,
-    image_url: meal.strMealThumb,
+    image_url: meal.strMealThumb || null,
     cuisine_type: meal.strCategory || null,
     area: meal.strArea || null,
     category: meal.strCategory || null,
-    ingredients: ingredients,
+    ingredients,
     instructions: meal.strInstructions || null,
     youtube_url: meal.strYoutube || null,
-    tags: tags,
+    tags,
   };
 }
 
-/**
- * Insert recipes into Supabase in batches
- */
-async function insertRecipes(recipes) {
+async function insertRecipes(
+  recipes: Recipe[]
+): Promise<{ totalInserted: number; totalErrors: number }> {
   let totalInserted = 0;
   let totalErrors = 0;
 
-  // Process in batches
   for (let i = 0; i < recipes.length; i += BATCH_SIZE) {
     const batch = recipes.slice(i, i + BATCH_SIZE);
 
     try {
-      const { data, error } = await supabase
+      const { error } = await supabase
         .from('recipes')
         .upsert(batch, { onConflict: 'id' });
 
       if (error) {
-        console.error(`Error inserting batch ${i / BATCH_SIZE + 1}:`, error.message);
+        console.error(
+          `Error inserting batch ${i / BATCH_SIZE + 1}:`,
+          error.message
+        );
         totalErrors += batch.length;
       } else {
         totalInserted += batch.length;
-        console.log(`Inserted batch ${i / BATCH_SIZE + 1}: ${batch.length} recipes`);
+        console.log(
+          `Inserted batch ${i / BATCH_SIZE + 1}: ${batch.length} recipes`
+        );
       }
     } catch (error) {
-      console.error(`Error inserting batch ${i / BATCH_SIZE + 1}:`, error.message);
+      console.error(
+        `Error inserting batch ${i / BATCH_SIZE + 1}:`,
+        error instanceof Error ? error.message : 'Unknown error'
+      );
       totalErrors += batch.length;
     }
 
-    // Small delay between batches
     await delay(100);
   }
 
   return { totalInserted, totalErrors };
 }
 
-/**
- * Main seeding function
- */
-async function seedRecipes() {
+// =====================================================
+// Main Function
+// =====================================================
+
+async function seedRecipes(): Promise<void> {
   console.log('Starting recipe seeding process...\n');
   console.log('Fetching recipes from TheMealDB API...\n');
 
-  const allRecipes = [];
+  const allRecipes: Recipe[] = [];
   const alphabet = 'abcdefghijklmnopqrstuvwxyz'.split('');
 
-  // Fetch recipes for each letter
   for (const letter of alphabet) {
     console.log(`Fetching recipes starting with '${letter.toUpperCase()}'...`);
     const meals = await fetchRecipesByLetter(letter);
@@ -153,7 +244,6 @@ async function seedRecipes() {
       console.log(`  No recipes found`);
     }
 
-    // Delay between requests to be nice to the API
     await delay(DELAY_MS);
   }
 
@@ -164,7 +254,6 @@ async function seedRecipes() {
     return;
   }
 
-  // Remove duplicates (just in case)
   const uniqueRecipes = Array.from(
     new Map(allRecipes.map(recipe => [recipe.id, recipe])).values()
   );
@@ -191,7 +280,7 @@ async function seedRecipes() {
   }
 }
 
-// Run the seeding process
+// Run
 seedRecipes()
   .then(() => {
     console.log('Seeding process finished.');

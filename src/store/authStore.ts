@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { supabase } from '../lib/supabase';
 import type { User, Session } from '@supabase/supabase-js';
+import { errorLogger } from '../utils/errorLogger';
 
 interface CoupleInfo {
   id: string;
@@ -50,29 +51,66 @@ interface AuthState {
   initialize: () => Promise<void>;
 }
 
-export const useAuthStore = create<AuthState>((set, get) => ({
-  // Initial state
+// Create store with middleware that ensures booleans are always actual booleans
+const storeImpl = (set: any, get: any) => {
+  // Wrapper to ensure booleans are always actual booleans (not strings)
+  const safeSet = (updates: any) => {
+    // Get current state for defaults
+    const currentState = get();
+
+    // Start with current boolean values, then apply updates
+    const merged = {
+      isLoading: currentState.isLoading,
+      isAuthenticated: currentState.isAuthenticated,
+      isPaired: currentState.isPaired,
+      ...updates,
+    };
+
+    // ALWAYS coerce all three boolean flags to prevent undefined/string leakage
+    // Use strict comparison to get primitive booleans (not Boolean objects)
+    const coerced = {
+      ...merged,
+      isLoading: (merged.isLoading === true || merged.isLoading === 'true') === true,
+      isAuthenticated: (merged.isAuthenticated === true || merged.isAuthenticated === 'true') === true,
+      isPaired: (merged.isPaired === true || merged.isPaired === 'true') === true,
+    };
+
+    // Debug logging in development (show types and values)
+    if (__DEV__) {
+      console.log('[AuthStore] Setting state:', {
+        isLoading: `${typeof coerced.isLoading} = ${coerced.isLoading}`,
+        isAuthenticated: `${typeof coerced.isAuthenticated} = ${coerced.isAuthenticated}`,
+        isPaired: `${typeof coerced.isPaired} = ${coerced.isPaired}`,
+      });
+    }
+
+    set(coerced);
+  };
+
+  return {
+  // Initial state - use double negation to ensure primitive booleans
   user: null,
   session: null,
   profile: null,
   couple: null,
-  isLoading: true,
-  isAuthenticated: false,
-  isPaired: false,
+  isLoading: !!1,  // true as primitive boolean
+  isAuthenticated: !!0,  // false as primitive boolean
+  isPaired: !!0,  // false as primitive boolean
+
 
   // Setters
-  setUser: (user) => set({
+  setUser: (user) => safeSet({
     user,
     isAuthenticated: !!user
   }),
 
-  setSession: (session) => set({ session }),
+  setSession: (session) => safeSet({ session }),
 
-  setProfile: (profile) => set({ profile }),
+  setProfile: (profile) => safeSet({ profile }),
 
-  setCouple: (couple) => set({
+  setCouple: (couple) => safeSet({
     couple,
-    isPaired: !!couple
+    isPaired: !!couple && !!couple.user2_id
   }),
 
   // Login method
@@ -86,7 +124,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       if (error) throw error;
 
       if (data.user) {
-        set({
+        safeSet({
           user: data.user,
           session: data.session,
           isAuthenticated: true
@@ -100,7 +138,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           .single();
 
         if (profileError) throw profileError;
-        set({ profile: profileData });
+        safeSet({ profile: profileData });
 
         // Check if user is paired
         const { data: coupleData, error: coupleError } = await supabase
@@ -110,11 +148,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           .single();
 
         if (!coupleError && coupleData) {
-          set({ couple: coupleData, isPaired: true });
+          safeSet({ couple: coupleData, isPaired: !!coupleData.user2_id });
         }
       }
     } catch (error: any) {
       console.error('Login error:', error);
+      errorLogger.error(error, {
+        component: 'authStore',
+        action: 'login',
+      });
       throw new Error(error.message || 'Failed to login');
     }
   },
@@ -135,7 +177,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       if (error) throw error;
 
       if (data.user) {
-        set({
+        safeSet({
           user: data.user,
           session: data.session,
           isAuthenticated: true
@@ -156,10 +198,14 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           .single();
 
         if (profileError) throw profileError;
-        set({ profile: profileData });
+        safeSet({ profile: profileData });
       }
     } catch (error: any) {
       console.error('Signup error:', error);
+      errorLogger.error(error, {
+        component: 'authStore',
+        action: 'signup',
+      });
       throw new Error(error.message || 'Failed to sign up');
     }
   },
@@ -170,7 +216,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const { error } = await supabase.auth.signOut();
       if (error) throw error;
 
-      set({
+      safeSet({
         user: null,
         session: null,
         profile: null,
@@ -180,6 +226,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       });
     } catch (error: any) {
       console.error('Logout error:', error);
+      errorLogger.error(error, {
+        component: 'authStore',
+        action: 'logout',
+      });
       throw new Error(error.message || 'Failed to logout');
     }
   },
@@ -213,10 +263,14 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
       if (error) throw error;
 
-      set({ couple: data, isPaired: false }); // Not yet paired until user2 joins
+      safeSet({ couple: data, isPaired: false }); // Not yet paired until user2 joins
       return inviteCode;
     } catch (error: any) {
       console.error('Generate invite code error:', error);
+      errorLogger.error(error, {
+        component: 'authStore',
+        action: 'generateInviteCode',
+      });
       throw new Error(error.message || 'Failed to generate invite code');
     }
   },
@@ -256,12 +310,16 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
       if (updateError) throw updateError;
 
-      set({
+      safeSet({
         couple: updatedCouple,
         isPaired: true
       });
     } catch (error: any) {
       console.error('Accept invite code error:', error);
+      errorLogger.error(error, {
+        component: 'authStore',
+        action: 'acceptInviteCode',
+      });
       throw new Error(error.message || 'Failed to accept invite code');
     }
   },
@@ -269,7 +327,47 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   // Initialize auth state
   initialize: async () => {
     try {
-      set({ isLoading: true });
+      safeSet({ isLoading: true });
+
+      // Development bypass - use mock data
+      if (__DEV__ && process.env.EXPO_PUBLIC_DEV_BYPASS_AUTH === 'true') {
+        console.log('[DEV] Using mock auth data');
+
+        const mockUser = {
+          id: process.env.EXPO_PUBLIC_DEV_MOCK_USER_ID || 'dev-user-123',
+          email: 'dev@test.com',
+        } as User;
+
+        const mockProfile = {
+          id: process.env.EXPO_PUBLIC_DEV_MOCK_USER_ID || 'dev-user-123',
+          email: 'dev@test.com',
+          full_name: 'Dev User',
+          avatar_url: null,
+          dietary_preferences: [],
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+
+        const mockCouple = {
+          id: process.env.EXPO_PUBLIC_DEV_MOCK_COUPLE_ID || 'dev-couple-456',
+          user1_id: process.env.EXPO_PUBLIC_DEV_MOCK_USER_ID || 'dev-user-123',
+          user2_id: 'dev-partner-789',
+          invite_code: 'DEVTEST',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+
+        safeSet({
+          user: mockUser,
+          session: { user: mockUser } as Session,
+          profile: mockProfile,
+          couple: mockCouple,
+          isAuthenticated: true,
+          isPaired: true,
+          isLoading: false,
+        });
+        return;
+      }
 
       // Get current session
       const { data: { session }, error: sessionError } = await supabase.auth.getSession();
@@ -277,7 +375,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       if (sessionError) throw sessionError;
 
       if (session?.user) {
-        set({
+        safeSet({
           user: session.user,
           session,
           isAuthenticated: true
@@ -291,7 +389,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           .single();
 
         if (!profileError && profileData) {
-          set({ profile: profileData });
+          safeSet({ profile: profileData });
         }
 
         // Check if user is paired
@@ -302,14 +400,14 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           .single();
 
         if (!coupleError && coupleData) {
-          set({ couple: coupleData, isPaired: true });
+          safeSet({ couple: coupleData, isPaired: !!coupleData.user2_id });
         }
       }
 
       // Set up auth state listener
       supabase.auth.onAuthStateChange(async (event, session) => {
         if (event === 'SIGNED_IN' && session?.user) {
-          set({
+          safeSet({
             user: session.user,
             session,
             isAuthenticated: true
@@ -323,7 +421,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             .single();
 
           if (profileData) {
-            set({ profile: profileData });
+            safeSet({ profile: profileData });
           }
 
           // Check pairing status
@@ -334,10 +432,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             .single();
 
           if (coupleData) {
-            set({ couple: coupleData, isPaired: true });
+            safeSet({ couple: coupleData, isPaired: !!coupleData.user2_id });
           }
         } else if (event === 'SIGNED_OUT') {
-          set({
+          safeSet({
             user: null,
             session: null,
             profile: null,
@@ -349,8 +447,26 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       });
     } catch (error: any) {
       console.error('Initialize auth error:', error);
+      errorLogger.error(error, {
+        component: 'authStore',
+        action: 'initialize',
+      });
     } finally {
-      set({ isLoading: false });
+      safeSet({ isLoading: false });
     }
   },
-}));
+  };
+};
+
+// Create and export the store
+export const useAuthStore = create<AuthState>(storeImpl);
+
+// Debug initial state in development
+if (__DEV__) {
+  const initialState = useAuthStore.getState();
+  console.log('[AuthStore] Initial state types:', {
+    isLoading: `${typeof initialState.isLoading} = ${initialState.isLoading}`,
+    isAuthenticated: `${typeof initialState.isAuthenticated} = ${initialState.isAuthenticated}`,
+    isPaired: `${typeof initialState.isPaired} = ${initialState.isPaired}`,
+  });
+}
